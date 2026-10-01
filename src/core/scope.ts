@@ -47,6 +47,21 @@ export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = Object.freeze([
 ]);
 
 /**
+ * Default scope for a Dynamic Client Registration (RFC 7591 §2) request that
+ * omits `scope`. RFC 7591 lets the server register such a client "with a
+ * default set of scopes". Before this constant existed the DCR path stored
+ * '' — the empty grant then propagated through /authorize (which clamps to
+ * the registered scope), the auth code, the access + refresh tokens and every
+ * refresh, so the client failed every operation with
+ * `insufficient_scope … your_scopes: []` and never self-healed. ChatGPT's MCP
+ * connector omits `scope` at registration; Claude.ai sends one, which is why
+ * only ChatGPT hit this. Least privilege: `read`. A client that wants more
+ * must ask for it explicitly at registration (still subject to
+ * assertAllowedScopes).
+ */
+export const DCR_DEFAULT_SCOPE: Scope = 'read';
+
+/**
  * Hierarchy table: which required scopes are implied by which granted scope.
  * `admin` implies all (escape hatch for legacy + super-admin tokens).
  * `write` implies `read`. The two `*_admin` siblings only imply themselves.

@@ -24,7 +24,7 @@ import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/serv
 import type { AuthInfo as SdkAuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
-import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
+import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError, DCR_DEFAULT_SCOPE } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
 import { parseLegacyTokenScope } from './legacy-token-scope.ts';
 import type { SqlQuery, SqlValue } from './sql-query.ts';
@@ -237,6 +237,15 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     // is operator-trusted).
     assertAllowedScopes(parseScopeString(client.scope));
 
+    // RFC 7591 §2: when the registration omits `scope`, register the client
+    // with the server's default set rather than the empty set. An empty
+    // registered scope is never useful — authorize() clamps every grant to
+    // it, so the client would hold tokens that satisfy no operation
+    // (`your_scopes: []`). Explicit requests are stored as sent (validated
+    // above); this only fills the omitted case. See DCR_DEFAULT_SCOPE.
+    const requestedScopes = parseScopeString(client.scope);
+    const registeredScope = (requestedScopes.length > 0 ? requestedScopes : [DCR_DEFAULT_SCOPE]).join(' ');
+
     // v0.41.3 (T5): validate token_endpoint_auth_method on the DCR path so
     // `--enable-dcr` is not the looser entry point. CLI and admin paths gate
     // through the same `validateTokenEndpointAuthMethod` helper — all three
@@ -274,7 +283,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
         VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                 ${pgArray((client.redirect_uris || []).map(String))},
                 ${pgArray(client.grant_types || ['client_credentials'])},
-                ${client.scope || ''}, ${authMethod},
+                ${registeredScope}, ${authMethod},
                 ${now}, ${'default'}, ${pgArray(['default'])})
       `;
     } catch (err) {
@@ -287,7 +296,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
             VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                     ${pgArray((client.redirect_uris || []).map(String))},
                     ${pgArray(client.grant_types || ['client_credentials'])},
-                    ${client.scope || ''}, ${authMethod},
+                    ${registeredScope}, ${authMethod},
                     ${now}, ${'default'})
           `;
         } catch (err2) {
@@ -299,7 +308,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
               VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                       ${pgArray((client.redirect_uris || []).map(String))},
                       ${pgArray(client.grant_types || ['client_credentials'])},
-                      ${client.scope || ''}, ${authMethod},
+                      ${registeredScope}, ${authMethod},
                       ${now})
             `;
           } else {
@@ -314,7 +323,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
           VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                   ${pgArray((client.redirect_uris || []).map(String))},
                   ${pgArray(client.grant_types || ['client_credentials'])},
-                  ${client.scope || ''}, ${authMethod},
+                  ${registeredScope}, ${authMethod},
                   ${now})
         `;
       } else {
@@ -331,6 +340,9 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       ...client,
       client_id: clientId,
       client_id_issued_at: now,
+      // RFC 7591 §3.2.1: echo the scope actually registered (the default when
+      // the request omitted it) so the client learns its effective grant.
+      scope: registeredScope,
     };
     if (clientSecret) response.client_secret = clientSecret;
     return response;
